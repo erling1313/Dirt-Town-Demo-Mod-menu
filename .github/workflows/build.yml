@@ -6,7 +6,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ilammy/msvc-dev-cmd@v1
-      - run: powershell -ExecutionPolicy Bypass -File Build.ps1
+        with:
+          arch: x64
+      - name: Compile Native DLL
+        shell: cmd
+        run: |
+          cd native
+          build.cmd
+      - name: Build Full Package
+        shell: pwsh
+        run: |
+          .\Build.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: winmm-deutsch
