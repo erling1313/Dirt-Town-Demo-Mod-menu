@@ -8,16 +8,14 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-      - name: Compile Native DLL
-        shell: cmd
-        run: |
-          cd native
-          build.cmd
-      - name: Build Full Package
+      - name: Find and Build Mod
         shell: pwsh
         run: |
+          $buildScript = Get-ChildItem -Recurse -Filter "Build.ps1" | Select-Object -First 1
+          if (-not $buildScript) { throw "Build.ps1 wurde im Repository nicht gefunden!" }
+          Set-Location $buildScript.DirectoryName
           .\Build.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: winmm-deutsch
-          path: dist/winmm.dll
+          path: "**/dist/winmm.dll"
