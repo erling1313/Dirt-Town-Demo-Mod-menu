@@ -8,14 +8,19 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-      - name: Find and Build Mod
+      - name: Compile Native DLL & Menu
         shell: pwsh
         run: |
-          $buildScript = Get-ChildItem -Recurse -Filter "Build.ps1" | Select-Object -First 1
-          if (-not $buildScript) { throw "Build.ps1 wurde im Repository nicht gefunden!" }
-          Set-Location $buildScript.DirectoryName
-          .\Build.ps1
+          $root = (Get-ChildItem -Recurse -Filter "bridge.cpp" | Select-Object -First 1).Directory.Parent.FullName
+          Set-Location "$root\native"
+          New-Item -ItemType Directory -Force -Path "$root\dist" | Out-Null
+          ml64.exe /c /nologo /Fo"$root\dist\winmm_proxy.obj" winmm_proxy.asm
+          ml64.exe /c /nologo /Fo"$root\dist\terrain_camera.obj" terrain_camera.asm
+          cl.exe /nologo /O2 /EHsc /std:c++20 /LD bridge.cpp "$root\dist\winmm_proxy.obj" "$root\dist\terrain_camera.obj" /link /DEF:winmm_proxy.def /OUT:"$root\dist\winmm.dll" user32.lib gdi32.lib advapi32.lib shell32.lib
+          if ($LASTEXITCODE -ne 0) { throw "C++ Build fehlgeschlagen!" }
+          Set-Location $root
+          dotnet publish src\DirtTownMenu\DirtTownMenu.csproj -c Release -r win-x64 --self-contained false -o "$root\dist\DirtTownMenu"
       - uses: actions/upload-artifact@v4
         with:
           name: winmm-deutsch
-          path: "**/dist/winmm.dll"
+          path: "**/dist/**"
