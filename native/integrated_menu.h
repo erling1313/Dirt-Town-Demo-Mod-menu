@@ -10,10 +10,16 @@ static bool visible=false,binding=false,keys[256]{};
 static bool captureApplied=false,previousCursor=false,previousNav=false;
 static int fillKey=VK_F8,material=-1,target=-1,model=0;
 static float amount=5,radius=2,height=1;
+static float spawnDist=10.f,spawnYaw=0.f,spawnSide=0.f;
+static bool showSpawnPreview=true;
 static std::string message="F7 oeffnet das Menue. F8 fuellt den aktuellen Muldenkipper.",sync="Warte auf Koordinator";
 static wchar_t configPath[MAX_PATH]{};
 static const char* models[]={"dozer","hauler","bandvagn","truck","excavator","large_loader","medium_loader","tractor","dirtbike","snowmobile","hooklift","feeder"};
 static const char* modelLabels[]={"Planierraupe (Dozer)","Muldenkipper (Hauler)","Kettenfahrzeug (Bandvagn)","LKW (Truck)","Bagger (Excavator)","Grosser Radlader","Mittlerer Radlader","Traktor","Motocross-Bike","Schneemobil","Abrollkipper (Hooklift)","Beschicker (Feeder)"};
+// Ungefaehre Breite & Laenge (in Metern) fuer die 3D-Vorschau auf dem Boden
+static const float modelHalfW[]={1.6f,1.8f,1.3f,1.4f,1.6f,1.8f,1.5f,1.3f,0.6f,0.7f,1.4f,1.6f};
+static const float modelHalfL[]={2.8f,4.5f,2.6f,4.2f,3.2f,4.4f,3.6f,2.4f,1.1f,1.4f,4.2f,4.5f};
+
 template<class F>F api(uintptr_t rva){return reinterpret_cast<F>(base+rva);}
 using EndFrame=void(__fastcall*)();static EndFrame originalEnd;
 static ImGuiIO& io(){return *api<ImGuiIO*(__fastcall*)()>(0x1145620)();}
@@ -29,6 +35,7 @@ static freecam::Pose savedCamera{};
 static DWORD flyAt=0;
 static bool looking=false;
 static ImVec2 lookMouse{};
+
 static void restoreCamera(){
     if(flyingWorld&&flyingWorld==world&&GetTickCount()-worldSeen>=1500){looking=false;flyAt=0;return;}
     if(flyingWorld&&flyingWorld==world&&GetTickCount()-worldSeen<1500&&worldOK(world)&&readable((char*)world+0x19A40,0x4B0)){
@@ -36,6 +43,83 @@ static void restoreCamera(){
     }
     flyingWorld=nullptr;looking=false;flyAt=0;
 }
+
+// Berechnet die gewuenschte Spawn-Position relativ zum Spieler und zur Blickrichtung der Kamera
+static bool getSpawnTarget(float& outX, float& outZ, float& outYawRad){
+    if(!world||!worldOK(world))return false;
+    auto m=machine(world,at<int>(world,0xEAA0));if(!m)return false;
+    alignas(32) double p[4]{};auto table=at<void**>(m,0);
+    api<void*(__fastcall*)(void*,void*)>(uintptr_t(table[0x88/8])-base)(p,m);
+    float px=float(p[0]),pz=float(p[2]);
+
+    // Blickrichtung aus der Spielkamera auslesen (falls aktiv), sonst Standardachse nutzen
+    float fwdX=0.f,fwdZ=1.f;
+    if(terrain::cameraWorld==world&&GetTickCount()-terrain::cameraSeen<1500&&readable((char*)world+0x19EC0,sizeof(freecam::Pose))){
+        auto& cam=at<freecam::Pose>(world,0x19EC0);
+        float len=hypotf(float(cam.forward[0]),float(cam.forward[2]));
+        if(len>0.01f){fwdX=float(cam.forward[0])/len;fwdZ=float(cam.forward[2])/len;}
+    }
+    float rightX=-fwdZ,rightZ=fwdX;
+    outX=px + fwdX*spawnDist + rightX*spawnSide;
+    outZ=pz + fwdZ*spawnDist + rightZ*spawnSide;
+    float baseYaw=atan2f(fwdX,fwdZ);
+    outYawRad=baseYaw + spawnYaw*0.01745329f;
+    return true;
+}
+
+// Zeichnet eine 3D-Linie auf das Gelaende (mit Clipping)
+static void drawWorldLine(void* list,float x1,float z1,float x2,float z2,unsigned color,float thickness,float dispW,float dispH){
+    alignas(32) double p1[4]={x1,terrain::ground(world,x1,z1)+0.18,z1,0};
+    alignas(32) double p2[4]={x2,terrain::ground(world,x2,z2)+0.18,z2,0};
+    ImVec2 s1{},s2{};
+    if(terrain::project(p1,dispW,dispH,s1)&&terrain::project(p2,dispW,dispH,s2)){
+        if(preview::clip(s1,s2,dispW,dispH))
+            api<void(__fastcall*)(void*,const ImVec2&,const ImVec2&,unsigned,float)>(0x11A8510)(list,s1,s2,color,thickness);
+    }
+}
+
+// Zeichnet die 3D-Vorschau-Box + Richtungspfeil fuer das gewaehlte Fahrzeug
+static void drawSpawnPreview(bool ready){
+    if(!ready||!visible||!showSpawnPreview)return;
+    if(terrain::cameraWorld!=world||GetTickCount()-terrain::cameraSeen>1500)return;
+    float cx=0,cz=0,yaw=0;
+    if(!getSpawnTarget(cx,cz,yaw))return;
+
+    auto& input=io();
+    float w=input.DisplaySize.x,h=input.DisplaySize.y;
+    auto list=api<void*(__fastcall*)(void*)>(0x11456B0)(nullptr);
+    if(!list)return;
+
+    float hw=modelHalfW[model],hl=modelHalfL[model];
+    float sn=sinf(yaw),cs=cosf(yaw);
+    auto rotX=[&](float lx,float lz){return cx + lx*cs + lz*sn;};
+    auto rotZ=[&](float lx,float lz){return cz - lx*sn + lz*cs;};
+
+    // 4 Ecken des Fahrzeug-Umrisses
+    float xFL=rotX(-hw, hl), zFL=rotZ(-hw, hl); // Vorne Links
+    float xFR=rotX( hw, hl), zFR=rotZ( hw, hl); // Vorne Rechts
+    float xBR=rotX( hw,-hl), zBR=rotZ( hw,-hl); // Hinten Rechts
+    float xBL=rotX(-hw,-hl), zBL=rotZ(-hw,-hl); // Hinten Links
+
+    unsigned colBox=0xFF4CE88A;   // Gruen fuer Fahrzeugrahmen
+    unsigned colFront=0xFF33B5FF; // Orange/Gelb fuer Vorderseite & Pfeil
+
+    // Rahmen zeichnen
+    drawWorldLine(list,xFL,zFL,xFR,zFR,colFront,3.5f,w,h); // Vorderkante dick hervorgehoben
+    drawWorldLine(list,xFR,zFR,xBR,zBR,colBox,2.5f,w,h);
+    drawWorldLine(list,xBR,zBR,xBL,zBL,colBox,2.5f,w,h);
+    drawWorldLine(list,xBL,zBL,xFL,zFL,colBox,2.5f,w,h);
+
+    // Richtungspfeil in der Mitte nach vorne
+    float xMid=rotX(0,0), zMid=rotZ(0,0);
+    float xTip=rotX(0,hl+1.4f), zTip=rotZ(0,hl+1.4f);
+    float xTipL=rotX(-0.6f,hl+0.5f), zTipL=rotZ(-0.6f,hl+0.5f);
+    float xTipR=rotX( 0.6f,hl+0.5f), zTipR=rotZ( 0.6f,hl+0.5f);
+    drawWorldLine(list,xMid,zMid,xTip,zTip,colFront,3.0f,w,h);
+    drawWorldLine(list,xTip,zTip,xTipL,zTipL,colFront,3.0f,w,h);
+    drawWorldLine(list,xTip,zTip,xTipR,zTipR,colFront,3.0f,w,h);
+}
+
 static void cameraFrame(bool ready,ImVec2 panelPos,ImVec2 panelSize){
     if(!ready||!visible||!terrain::armed||!focus()||at<unsigned char>(world,0xEE18)){
         restoreCamera();return;
@@ -115,7 +199,7 @@ static void action(unsigned command,int vehicle=0,int mat=0,float volume=1,float
         auto end=message.find('"');if(end!=std::string::npos)message.resize(end);
     }else if(command==2){
         auto added=strstr(local.reply,"\"added\":");char b[160];snprintf(b,sizeof(b),"%.2f m3 in den Muldenkipper gefuellt.",added?strtod(added+8,nullptr):0);message=b;
-    }else if(command==3)message="Fahrzeug erfolgreich gespawnt und entsperrt!";
+    }else if(command==3)message="Fahrzeug an Vorschau-Position gespawnt und entsperrt!";
     else if(command==4)message="Entsperrung angewendet. Fahrzeug neu betreten zum Testen.";
     else if(command==5)message="Materialhaufen vom Spiel erstellt.";
 }
@@ -147,13 +231,14 @@ static bool position(float distance,float& x,float& z){
     }if(best<16){message="Suche eine freiere Flaeche zum Spawnen.";return false;}return true;
 }
 static void create(){
-    float x=0,z=0;if(!position(18,x,z))return;
+    float x=0,z=0,yaw=0;
+    if(!getSpawnTarget(x,z,yaw)){message="Deine Position konnte nicht ermittelt werden.";return;}
     if(at<unsigned char>(world,0xEE18)){
         if(outbox.event!=outbox.ack){message="Es laeuft bereits eine Erstellung. Bitte warten.";return;}
         if(GetTickCount()-agentSeen>5000){message="Oeffne den Koop-Koordinator zur Synchronisation.";return;}
         outbox.command=3;outbox.x=x;outbox.z=z;strncpy_s(outbox.model,models[model],_TRUNCATE);outbox.event++;
         message="Erstellung an Koordinator gesendet. Warte auf Bestaetigung.";
-    }else action(3,0,0,1,x,z,models[model]);
+    }else action(3,0,0,1,x,z,models[model],yaw);
 }
 static void pollKeys(bool ready){
     if(!focus()){for(auto& key:keys)key=false;return;}
@@ -172,7 +257,7 @@ static void draw(){
     if(!captureApplied){previousCursor=io().MouseDrawCursor;previousNav=(io().ConfigFlags&ImGuiConfigFlags_NavEnableKeyboard)!=0;captureApplied=true;}
     io().ConfigFlags|=ImGuiConfigFlags_NavEnableKeyboard;
     io().MouseDrawCursor=true;
-    ImVec2 size(530,650);api<void(__fastcall*)(const ImVec2&,int)>(0x11490D0)(size,ImGuiCond_FirstUseEver);
+    ImVec2 size(540,720);api<void(__fastcall*)(const ImVec2&,int)>(0x11490D0)(size,ImGuiCond_FirstUseEver);
     bool contents=api<bool(__fastcall*)(const char*,bool*,int)>(0x1170050)("Dirt Town Mod Menue 0.6.3 DE [F7]",&visible,ImGuiWindowFlags_NoSavedSettings);
     ImVec2 panelPos{},panelSize{};
     auto context=*reinterpret_cast<unsigned char**>(base+0x1E084E8);auto window=at<void*>(context,0x1620);
@@ -197,12 +282,16 @@ static void draw(){
             if(button("Material in Muldenkipper fuellen"))fill(false);
             if(button("Muldenkipper komplett fuellen"))fill(true);
             if(button(binding?"Druecke A-Z oder F1-F12 (Esc = Abbruch)":"Schnelltaste zum Fuellen: "+keyName(fillKey)))binding=true;
-            label("Schnelltaste nutzt gewaehltes Material & Kipper.");
+            label("FAHRZEUGE & PLATZIERUNG (3D-Vorschau auf Boden)");
             if(button(std::string("Fahrzeug: ")+modelLabels[model]+" [Naechstes]"))model=(model+1)%12;
-            if(button("Fahrzeug neben mir spawnen"))create();
+            if(button(showSpawnPreview?"3D-Vorschau auf Boden: AN [Ausschalten]":"3D-Vorschau auf Boden: AUS [Einschalten]"))showSpawnPreview=!showSpawnPreview;
+            slider("Abstand nach vorne (m)",spawnDist,4.f,25.f);
+            slider("Seitlicher Versatz (m)",spawnSide,-15.f,15.f);
+            slider("Drehung / Winkel (Grad)",spawnYaw,0.f,360.f);
+            if(button("Fahrzeug an Vorschau-Position spawnen"))create();
+            if(button("Alle Fahrzeuge/Bagger entsperren"))action(4);
             slider("Haufen-Radius (m)",radius,0.25f,5);slider("Haufen-Hoehe (m)",height,0.1f,3);
             if(button("Materialhaufen neben mir erstellen")){float x=0,z=0;if(position(radius+5,x,z))action(5,0,material,radius,x,z,"",height);}
-            if(button("Alle Fahrzeuge/Bagger entsperren"))action(4);
             label("GELAENDE · Experimentell · Einzelspieler");
             if(button(std::string("Pinselmodus: ")+terrain::names[terrain::mode]+" [Wechseln]"))terrain::mode=(terrain::mode+1)%4;
             slider("Pinselradius (m)",terrain::radius,0.5f,10);
@@ -215,15 +304,14 @@ static void draw(){
                 if(button("Angegebene Hoehe verwenden"))terrain::levelPicked=true;
             }
             if(button(terrain::armed?"Pinsel deaktivieren [Esc]":"Pinsel aktivieren")){terrain::armed=!terrain::armed;terrain::wasDown=true;terrain::status=terrain::armed?"Aktiviert: Zeige auf das Gelaende ausserhalb des Menues.":"Pinsel deaktiviert";}
-            label("Freie Kamera: WASD | Q/E: Runter/Hoch");
-            label("Rechtsklick: Drehen | Shift: Schnell | Linksklick: Malen");
-            label("Esc oder F7: Beenden und Kamera wiederherstellen.");label(terrain::status);
-            label("Hinweis: Fuellen/Haufen/Entsperren im Koop ungetestet.");
+            label("Freie Kamera: WASD | Q/E: Runter/Hoch | Rechtsklick: Drehen");
+            label(terrain::status);
         }
         label(message);
     }
     api<void(__fastcall*)()>(0x117C970)();
     if(!visible){terrain::armed=false;terrain::pickLevel=false;}
+    drawSpawnPreview(ready);
     cameraFrame(ready,panelPos,panelSize);
     terrainFrame(ready,panelPos,panelSize);
     if(!terrain::armed)restoreCamera();
