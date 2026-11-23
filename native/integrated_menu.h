@@ -44,7 +44,7 @@ static void restoreCamera(){
     flyingWorld=nullptr;looking=false;flyAt=0;
 }
 
-// Berechnet die gewuenschte Spawn-Position relativ zum Spieler und zur Blickrichtung der Kamera
+// Berechnet die gewuenschte Spawn-Position relativ zum Spieler und zur Blickrichtung der Bildschirmmitte
 static bool getSpawnTarget(float& outX, float& outZ, float& outYawRad){
     if(!world||!worldOK(world))return false;
     auto m=machine(world,at<int>(world,0xEAA0));if(!m)return false;
@@ -52,12 +52,14 @@ static bool getSpawnTarget(float& outX, float& outZ, float& outYawRad){
     api<void*(__fastcall*)(void*,void*)>(uintptr_t(table[0x88/8])-base)(p,m);
     float px=float(p[0]),pz=float(p[2]);
 
-    // Blickrichtung aus der Spielkamera auslesen (falls aktiv), sonst Standardachse nutzen
+    // Blickrichtung ueber den Bodenpunkt in der Bildschirmmitte bestimmen
     float fwdX=0.f,fwdZ=1.f;
-    if(terrain::cameraWorld==world&&GetTickCount()-terrain::cameraSeen<1500&&readable((char*)world+0x19EC0,sizeof(freecam::Pose))){
-        auto& cam=at<freecam::Pose>(world,0x19EC0);
-        float len=hypotf(float(cam.forward[0]),float(cam.forward[2]));
-        if(len>0.01f){fwdX=float(cam.forward[0])/len;fwdZ=float(cam.forward[2])/len;}
+    auto& input=io();
+    alignas(32) double centerHit[4]{};
+    if(terrain::cameraWorld==world&&GetTickCount()-terrain::cameraSeen<1500&&terrain::hit(world,input.DisplaySize.x*0.5f,input.DisplaySize.y*0.5f,input.DisplaySize.x,input.DisplaySize.y,centerHit)){
+        float dx=float(centerHit[0])-px,dz=float(centerHit[2])-pz;
+        float len=hypotf(dx,dz);
+        if(len>0.25f){fwdX=dx/len;fwdZ=dz/len;}
     }
     float rightX=-fwdZ,rightZ=fwdX;
     outX=px + fwdX*spawnDist + rightX*spawnSide;
