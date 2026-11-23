@@ -2,7 +2,7 @@ name: Build Mod
 on: [push]
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: ilammy/msvc-dev-cmd@v1
@@ -18,7 +18,7 @@ jobs:
           if errorlevel 1 exit /b 1
           ml64 /nologo /c /Fo"artifacts\terrain_camera.obj" "native\terrain_camera.asm"
           if errorlevel 1 exit /b 1
-          cl /nologo /std:c++20 /EHsc /O2 /MT /LD "native\bridge.cpp" "artifacts\winmm_proxy.obj" "artifacts\terrain_camera.obj" /Fo:"artifacts\bridge10.obj" /link user32.lib bcrypt.lib /DEF:"native\winmm_proxy.def" /IMPLIB:"artifacts\winmm.lib" /OUT:"artifacts\DirtTownMenu-0.6.3\winmm.dll"
+          cl /nologo /std:c++20 /EHsc /O2 /MT /LD "native\bridge.cpp" "artifacts\winmm_proxy.obj" "artifacts\terrain_camera.obj" /Fo:"artifacts\bridge10.obj" /link /MACHINE:X64 /SUBSYSTEM:WINDOWS user32.lib bcrypt.lib /DEF:"native\winmm_proxy.def" /IMPLIB:"artifacts\winmm.lib" /OUT:"artifacts\DirtTownMenu-0.6.3\winmm.dll"
           if errorlevel 1 exit /b 1
           dotnet publish "src\DirtTownMenu\DirtTownMenu.csproj" -c Release -r win-x64 --self-contained false -o "artifacts\DirtTownMenu-0.6.3"
       - uses: actions/upload-artifact@v4
