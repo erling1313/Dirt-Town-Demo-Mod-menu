@@ -8,16 +8,17 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-      - name: Compile Native DLL & Menu
+      - name: Build Native DLL via build.cmd
+        shell: cmd
+        run: |
+          for /f "delims=" %%i in ('dir /b /s build.cmd') do (
+            cd /d "%%~dpi"
+            call "%%i"
+          )
+      - name: Build Menu
         shell: pwsh
         run: |
           $root = (Get-ChildItem -Recurse -Filter "bridge.cpp" | Select-Object -First 1).Directory.Parent.FullName
-          Set-Location "$root\native"
-          New-Item -ItemType Directory -Force -Path "$root\dist" | Out-Null
-          ml64.exe /c /nologo /Fo"$root\dist\winmm_proxy.obj" winmm_proxy.asm
-          ml64.exe /c /nologo /Fo"$root\dist\terrain_camera.obj" terrain_camera.asm
-          cl.exe /nologo /O2 /MT /EHsc /std:c++20 /LD bridge.cpp "$root\dist\winmm_proxy.obj" "$root\dist\terrain_camera.obj" /link /DEF:winmm_proxy.def /OUT:"$root\dist\winmm.dll" kernel32.lib user32.lib gdi32.lib advapi32.lib shell32.lib bcrypt.lib
-          if ($LASTEXITCODE -ne 0) { throw "C++ Build fehlgeschlagen!" }
           Set-Location $root
           dotnet publish src\DirtTownMenu\DirtTownMenu.csproj -c Release -r win-x64 --self-contained false -o "$root\dist\DirtTownMenu"
       - uses: actions/upload-artifact@v4
