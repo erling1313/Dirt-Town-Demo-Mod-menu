@@ -8,23 +8,20 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-      - name: Inspect build.cmd and Compile
-        shell: pwsh
+      - name: Build Exact Mod Package
+        shell: cmd
         run: |
-          $buildCmd = Get-ChildItem -Recurse -Filter "build.cmd" | Select-Object -First 1
-          Write-Host "=== INHALT VON BUILD.CMD ==="
-          Get-Content $buildCmd.FullName
-          Write-Host "============================"
-          $root = $buildCmd.Directory.Parent.FullName
-          Set-Location "$root\native"
-          New-Item -ItemType Directory -Force -Path "$root\dist" | Out-Null
-          ml64.exe /c /nologo /Fo"$root\dist\winmm_proxy.obj" winmm_proxy.asm
-          ml64.exe /c /nologo /Fo"$root\dist\terrain_camera.obj" terrain_camera.asm
-          cl.exe /nologo /O2 /MT /EHsc /std:c++20 /LD bridge.cpp "$root\dist\winmm_proxy.obj" "$root\dist\terrain_camera.obj" /link /MACHINE:X64 /DEF:winmm_proxy.def /OUT:"$root\dist\winmm.dll" kernel32.lib user32.lib gdi32.lib advapi32.lib shell32.lib bcrypt.lib
-          if ($LASTEXITCODE -ne 0) { throw "C++ Build fehlgeschlagen!" }
-          Set-Location $root
-          dotnet publish src\DirtTownMenu\DirtTownMenu.csproj -c Release -r win-x64 --self-contained false -o "$root\dist\DirtTownMenu"
+          for /f "delims=" %%i in ('dir /b /s bridge.cpp') do set "NATIVEDIR=%%~dpi"
+          cd /d "%NATIVEDIR%.."
+          if not exist "artifacts\DirtTownMenu-0.6.3" mkdir "artifacts\DirtTownMenu-0.6.3"
+          ml64 /nologo /c /Fo"artifacts\winmm_proxy.obj" "native\winmm_proxy.asm"
+          if errorlevel 1 exit /b 1
+          ml64 /nologo /c /Fo"artifacts\terrain_camera.obj" "native\terrain_camera.asm"
+          if errorlevel 1 exit /b 1
+          cl /nologo /std:c++20 /EHsc /O2 /MT /LD "native\bridge.cpp" "artifacts\winmm_proxy.obj" "artifacts\terrain_camera.obj" /Fo:"artifacts\bridge10.obj" /link user32.lib bcrypt.lib /DEF:"native\winmm_proxy.def" /IMPLIB:"artifacts\winmm.lib" /OUT:"artifacts\DirtTownMenu-0.6.3\winmm.dll"
+          if errorlevel 1 exit /b 1
+          dotnet publish "src\DirtTownMenu\DirtTownMenu.csproj" -c Release -r win-x64 --self-contained false -o "artifacts\DirtTownMenu-0.6.3"
       - uses: actions/upload-artifact@v4
         with:
-          name: winmm-deutsch
-          path: "**/dist/**"
+          name: DirtTownMenu-Deutsch
+          path: "**/artifacts/DirtTownMenu-0.6.3/**"
