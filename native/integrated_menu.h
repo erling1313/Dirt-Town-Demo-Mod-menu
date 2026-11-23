@@ -10,9 +10,10 @@ static bool visible=false,binding=false,keys[256]{};
 static bool captureApplied=false,previousCursor=false,previousNav=false;
 static int fillKey=VK_F8,material=-1,target=-1,model=0;
 static float amount=5,radius=2,height=1;
-static std::string message="F7 abre el menu. F8 llena el volquete que conduces.",sync="Esperando al coordinador";
+static std::string message="F7 oeffnet das Menue. F8 fuellt den aktuellen Muldenkipper.",sync="Warte auf Koordinator";
 static wchar_t configPath[MAX_PATH]{};
 static const char* models[]={"dozer","hauler","bandvagn","truck","excavator","large_loader","medium_loader","tractor","dirtbike","snowmobile","hooklift","feeder"};
+static const char* modelLabels[]={"Planierraupe (Dozer)","Muldenkipper (Hauler)","Kettenfahrzeug (Bandvagn)","LKW (Truck)","Bagger (Excavator)","Grosser Radlader","Mittlerer Radlader","Traktor","Motocross-Bike","Schneemobil","Abrollkipper (Hooklift)","Beschicker (Feeder)"};
 template<class F>F api(uintptr_t rva){return reinterpret_cast<F>(base+rva);}
 using EndFrame=void(__fastcall*)();static EndFrame originalEnd;
 static ImGuiIO& io(){return *api<ImGuiIO*(__fastcall*)()>(0x1145620)();}
@@ -21,7 +22,7 @@ static bool button(const std::string& s){ImVec2 size(0,0);return api<bool(__fast
 static void slider(const char* name,float& value,float lo,float hi){api<bool(__fastcall*)(const char*,float*,float,float,const char*,int)>(0x1205F00)(name,&value,lo,hi,"%.1f",0);}
 static bool focus(){DWORD pid=0;GetWindowThreadProcessId(GetForegroundWindow(),&pid);return pid==GetCurrentProcessId();}
 static bool bindable(int key){return (key>='A'&&key<='Z')||(key>=VK_F1&&key<=VK_F12&&key!=VK_F7);}
-static std::string keyName(int key){char b[64]{};GetKeyNameTextA(LONG(MapVirtualKeyW(key,MAPVK_VK_TO_VSC)<<16),b,64);return b[0]?b:"Sin tecla";}
+static std::string keyName(int key){char b[64]{};GetKeyNameTextA(LONG(MapVirtualKeyW(key,MAPVK_VK_TO_VSC)<<16),b,64);return b[0]?b:"Keine Taste";}
 static void* flyingWorld=nullptr;
 static int savedCameraMode=0;
 static freecam::Pose savedCamera{};
@@ -29,9 +30,7 @@ static DWORD flyAt=0;
 static bool looking=false;
 static ImVec2 lookMouse{};
 static void restoreCamera(){
-    // A paused scene may stop the world hook. Defer restoration until it is fresh again.
     if(flyingWorld&&flyingWorld==world&&GetTickCount()-worldSeen>=1500){looking=false;flyAt=0;return;}
-    // Never write an old scene after the active world changes or becomes stale.
     if(flyingWorld&&flyingWorld==world&&GetTickCount()-worldSeen<1500&&worldOK(world)&&readable((char*)world+0x19A40,0x4B0)){
         at<int>(world,0x19A40)=savedCameraMode;at<freecam::Pose>(world,0x19EC0)=savedCamera;
     }
@@ -42,16 +41,15 @@ static void cameraFrame(bool ready,ImVec2 panelPos,ImVec2 panelSize){
         restoreCamera();return;
     }
     if(flyingWorld&&flyingWorld!=world)restoreCamera();
-    // Native gameplay camera, traced from World through the 24C010 update call.
     if(!readable((char*)world+0x19A40,0x4B0)||!freecam::valid(at<freecam::Pose>(world,0x19EC0))||at<int>(world,0x19A40)<0||at<int>(world,0x19A40)>2){
-        terrain::armed=false;restoreCamera();terrain::status="No se puede activar la camara libre en esta vista.";return;
+        terrain::armed=false;restoreCamera();terrain::status="Freie Kamera kann in dieser Ansicht nicht aktiviert werden.";return;
     }
     if(!flyingWorld){
         if(terrain::cameraWorld!=world||GetTickCount()-terrain::cameraSeen>1500)return;
         savedCameraMode=at<int>(world,0x19A40);savedCamera=at<freecam::Pose>(world,0x19EC0);
         flyingWorld=world;flyAt=GetTickCount();
     }
-    at<int>(world,0x19A40)=2; // native enum: chase=0, cab=1, free=2; selection EAA0/EAA4 untouched
+    at<int>(world,0x19A40)=2;
     DWORD now=GetTickCount();float dt=float(now-flyAt)*.001f;flyAt=now;
     auto& input=io();auto mouse=input.MousePos;
     bool over=mouse.x>=panelPos.x&&mouse.y>=panelPos.y&&mouse.x<=panelPos.x+panelSize.x&&mouse.y<=panelPos.y+panelSize.y;
@@ -62,7 +60,7 @@ static void cameraFrame(bool ready,ImVec2 panelPos,ImVec2 panelSize){
     if(input.WantTextInput||binding)return;
     auto key=[](int k){return (GetAsyncKeyState(k)&0x8000)?1.f:0.f;};
     if(!freecam::move(at<freecam::Pose>(world,0x19EC0),key('W')-key('S'),key('D')-key('A'),key('E')-key('Q'),dx,dy,dt,key(VK_SHIFT)>0)){
-        terrain::armed=false;restoreCamera();terrain::status="Camara detenida: limite de posicion o valor no valido.";
+        terrain::armed=false;restoreCamera();terrain::status="Kamera gestoppt: Positionslimit oder ungueltiger Wert.";
     }
 }
 static void terrainFrame(bool ready,ImVec2 panelPos,ImVec2 panelSize){
@@ -70,13 +68,11 @@ static void terrainFrame(bool ready,ImVec2 panelPos,ImVec2 panelSize){
     static DWORD previewAt=0;static alignas(32) double point[4]{};static bool found=false;
     if(!ready||!focus()){terrain::armed=false;terrain::pickLevel=false;terrain::wasDown=false;return;}
     if(!terrain::armed||!visible||!ready||!focus()){terrain::wasDown=false;return;}
-    if(at<unsigned char>(world,0xEE18)){terrain::armed=false;terrain::status="Pinceles disponibles solo en individual.";return;}
+    if(at<unsigned char>(world,0xEE18)){terrain::armed=false;terrain::status="Gelaendepinsel nur im Einzelspieler verfuegbar.";return;}
     auto& input=io();bool down=input.MouseDown[0],edge=down&&!terrain::wasDown;terrain::wasDown=down;
-    // Navigation and sculpting are mutually exclusive, including a held continuous stroke.
     if(looking||input.MouseDown[1])return;
     float mx=input.MousePos.x,my=input.MousePos.y;
     bool overPanel=mx>=panelPos.x&&my>=panelPos.y&&mx<=panelPos.x+panelSize.x&&my<=panelPos.y+panelSize.y;
-    // Block game input on the next event pump, while retaining ImGui input delivery.
     input.WantCaptureMouse=true;input.WantCaptureKeyboard=true;
     if(overPanel||input.WantTextInput||mx<0||my<0||mx>=input.DisplaySize.x||my>=input.DisplaySize.y)return;
     bool stroke=edge||(down&&terrain::continuous&&GetTickCount()-terrain::lastApply>=250);
@@ -95,35 +91,33 @@ static void terrainFrame(bool ready,ImVec2 panelPos,ImVec2 panelSize){
         }
     }
     if(!found){
-        terrain::status=terrain::cameraWorld!=world||GetTickCount()-terrain::cameraSeen>1500?"Esperando camara de la partida...":"No hay terreno bajo el cursor. Apunta al suelo.";return;
+        terrain::status=terrain::cameraWorld!=world||GetTickCount()-terrain::cameraSeen>1500?"Warte auf Spielkamera...":"Kein Gelaende unter dem Mauszeiger. Auf den Boden zeigen.";return;
     }
     auto list=api<void*(__fastcall*)(void*)>(0x11456B0)(nullptr);
-    // 11A8510 is AddLine. 11A9630 is AddCircle and has a different ABI.
     for(int n=0;n<segmentCount;n++)api<void(__fastcall*)(void*,const ImVec2&,const ImVec2&,unsigned,float)>(0x11A8510)(list,segments[n].a,segments[n].b,0xFF69E3AD,2.f);
-    if(terrain::pickLevel){if(edge){terrain::level=float(point[1]);terrain::levelPicked=true;terrain::pickLevel=false;terrain::status="Altura objetivo capturada.";}return;}
+    if(terrain::pickLevel){if(edge){terrain::level=float(point[1]);terrain::levelPicked=true;terrain::pickLevel=false;terrain::status="Zielhoehe uebernommen.";}return;}
     if(!edge&&!(down&&terrain::continuous&&GetTickCount()-terrain::lastApply>=250))return;
     if(at<uintptr_t>(world,0x17648))return;
     if(terrain::mode==2&&!terrain::levelPicked){terrain::level=float(point[1]);terrain::levelPicked=true;}
     terrain::lastApply=GetTickCount();
-    try{terrain::apply(world,material,point);}catch(const char* error){terrain::status=error;terrain::armed=false;}catch(...){terrain::status="Error del pincel; no repetir hasta revisar.";terrain::armed=false;}
+    try{terrain::apply(world,material,point);}catch(const char* error){terrain::status=error;terrain::armed=false;}catch(...){terrain::status="Pinselfehler; bitte nicht wiederholen.";terrain::armed=false;}
 }
 static void loadConfig(HINSTANCE){
     try{auto root=standalone::localRoot();std::filesystem::create_directories(root);wcscpy_s(configPath,(root/L"DirtTownMenu.ini").c_str());}catch(...){configPath[0]=0;}
     int key=GetPrivateProfileIntW(L"Keys",L"FillTruck",VK_F8,configPath);if(bindable(key))fillKey=key;
 }
-static void saveKey(){wchar_t value[16];swprintf_s(value,L"%d",fillKey);if(!configPath[0]||!WritePrivateProfileStringW(L"Keys",L"FillTruck",value,configPath))message="La tecla funciona en esta sesion pero no se ha podido guardar.";}
+static void saveKey(){wchar_t value[16];swprintf_s(value,L"%d",fillKey);if(!configPath[0]||!WritePrivateProfileStringW(L"Keys",L"FillTruck",value,configPath))message="Taste funktioniert in dieser Sitzung, konnte aber nicht gespeichert werden.";}
 static void action(unsigned command,int vehicle=0,int mat=0,float volume=1,float x=0,float z=0,const char* code="",float h=1){
-    // UI actions have their own request storage; the external coordinator's IPC is never overwritten.
     Shared local{};local.request=1;local.command=command;local.vehicle=vehicle;local.material=mat;local.amount=volume;local.x=x;local.z=z;local.yaw=h;
     strncpy_s(local.model,code,_TRUNCATE);auto saved=shared;shared=&local;execute(world);shared=saved;
     if(strstr(local.reply,"\"ok\":false")){
-        auto error=strstr(local.reply,"\"error\":\"");message=error?error+9:"El juego ha rechazado la accion.";
+        auto error=strstr(local.reply,"\"error\":\"");message=error?error+9:"Das Spiel hat die Aktion abgelehnt.";
         auto end=message.find('"');if(end!=std::string::npos)message.resize(end);
     }else if(command==2){
-        auto added=strstr(local.reply,"\"added\":");char b[160];snprintf(b,sizeof(b),"Anadidos %.2f m3 al volquete.",added?strtod(added+8,nullptr):0);message=b;
-    }else if(command==3)message="Vehiculo creado en la partida individual.";
-    else if(command==4)message="Operacion de desbloqueo aplicada. Vuelve a entrar para probar los controles.";
-    else if(command==5)message="Monton aceptado por el juego.";
+        auto added=strstr(local.reply,"\"added\":");char b[160];snprintf(b,sizeof(b),"%.2f m3 in den Muldenkipper gefuellt.",added?strtod(added+8,nullptr):0);message=b;
+    }else if(command==3)message="Fahrzeug erfolgreich gespawnt und entsperrt!";
+    else if(command==4)message="Entsperrung angewendet. Fahrzeug neu betreten zum Testen.";
+    else if(command==5)message="Materialhaufen vom Spiel erstellt.";
 }
 static int selectedTruck(){
     int id=target<0?at<int>(world,0xEAA0):target;auto m=machine(world,id);
@@ -136,12 +130,12 @@ static void ensureMaterial(){
     if(material<0||size_t(material)>=count){material=0;for(size_t i=0;i<count;i++)if(text(at<char*>((void*)(begin+i*0x128),0))=="gravel")material=int(i);}
 }
 static void fill(bool full){
-    int id=selectedTruck();if(id<0){message="Selecciona/conduce un volquete hauler para llenarlo.";return;}
-    if(!materialOK(world,material)){message="Selecciona primero un material.";return;}
+    int id=selectedTruck();if(id<0){message="Waehle/fahre einen Muldenkipper (Hauler), um ihn zu fuellen.";return;}
+    if(!materialOK(world,material)){message="Waehle zuerst ein Material aus.";return;}
     action(2,id,material,full?0:amount);
 }
 static bool position(float distance,float& x,float& z){
-    auto m=machine(world,at<int>(world,0xEAA0));if(!m){message="No se encuentra tu posicion.";return false;}
+    auto m=machine(world,at<int>(world,0xEAA0));if(!m){message="Deine Position wurde nicht gefunden.";return false;}
     alignas(32) double p[4]{};auto table=at<void**>(m,0);api<void*(__fastcall*)(void*,void*)>(uintptr_t(table[0x88/8])-base)(p,m);
     float best=-1;size_t count=(at<uintptr_t>(world,0xE8C8)-at<uintptr_t>(world,0xE8C0))/8;
     for(int n=0;n<24;n++){
@@ -150,22 +144,22 @@ static bool position(float distance,float& x,float& z){
             alignas(32) double q[4]{};auto v=at<void**>(other,0);reinterpret_cast<void*(__fastcall*)(void*,void*)>(v[0x88/8])(q,other);
             float dx=cx-float(q[0]),dz=cz-float(q[2]);clear=fminf(clear,dx*dx+dz*dz);
         }if(clear>best){best=clear;x=cx;z=cz;}
-    }if(best<16){message="Busca una zona mas despejada.";return false;}return true;
+    }if(best<16){message="Suche eine freiere Flaeche zum Spawnen.";return false;}return true;
 }
 static void create(){
     float x=0,z=0;if(!position(18,x,z))return;
     if(at<unsigned char>(world,0xEE18)){
-        if(outbox.event!=outbox.ack){message="Hay una creacion pendiente. No repitas la accion.";return;}
-        if(GetTickCount()-agentSeen>5000){message="Abre el coordinador para sincronizar la creacion cooperativa.";return;}
+        if(outbox.event!=outbox.ack){message="Es laeuft bereits eine Erstellung. Bitte warten.";return;}
+        if(GetTickCount()-agentSeen>5000){message="Oeffne den Koop-Koordinator zur Synchronisation.";return;}
         outbox.command=3;outbox.x=x;outbox.z=z;strncpy_s(outbox.model,models[model],_TRUNCATE);outbox.event++;
-        message="Creacion enviada al coordinador. Espera la confirmacion.";
+        message="Erstellung an Koordinator gesendet. Warte auf Bestaetigung.";
     }else action(3,0,0,1,x,z,models[model]);
 }
 static void pollKeys(bool ready){
     if(!focus()){for(auto& key:keys)key=false;return;}
     for(int k=1;k<256;k++){
         bool down=(GetAsyncKeyState(k)&0x8000)!=0,edge=down&&!keys[k];keys[k]=down;if(!edge)continue;
-        if(binding){if(k==VK_ESCAPE){binding=false;message="Asignacion cancelada.";}else if(bindable(k)){fillKey=k;binding=false;saveKey();message="Atajo guardado: "+keyName(k);}continue;}
+        if(binding){if(k==VK_ESCAPE){binding=false;message="Tastenzuweisung abgebrochen.";}else if(bindable(k)){fillKey=k;binding=false;saveKey();message="Schnelltaste gespeichert: "+keyName(k);}continue;}
         if(k==VK_F7){visible=!visible;if(!visible)terrain::armed=false;continue;}
         if(k==VK_ESCAPE&&terrain::armed){terrain::armed=false;terrain::pickLevel=false;continue;}
         if(k==fillKey&&ready&&!io().WantCaptureKeyboard&&!io().WantTextInput&&!visible)fill(true);
@@ -179,52 +173,52 @@ static void draw(){
     io().ConfigFlags|=ImGuiConfigFlags_NavEnableKeyboard;
     io().MouseDrawCursor=true;
     ImVec2 size(530,650);api<void(__fastcall*)(const ImVec2&,int)>(0x11490D0)(size,ImGuiCond_FirstUseEver);
-    bool contents=api<bool(__fastcall*)(const char*,bool*,int)>(0x1170050)("Dirt Town Mod Menu 0.6.3 [F7]",&visible,ImGuiWindowFlags_NoSavedSettings);
+    bool contents=api<bool(__fastcall*)(const char*,bool*,int)>(0x1170050)("Dirt Town Mod Menue 0.6.3 DE [F7]",&visible,ImGuiWindowFlags_NoSavedSettings);
     ImVec2 panelPos{},panelSize{};
     auto context=*reinterpret_cast<unsigned char**>(base+0x1E084E8);auto window=at<void*>(context,0x1620);
     if(readable(window,0x70)){panelPos=at<ImVec2>(window,0x60);panelSize=at<ImVec2>(window,0x68);}
     if(contents){
-        label("F7: cerrar/abrir | Menu integrado en el juego");
-        if(ready&&at<unsigned char>(world,0xEE18))label(GetTickCount()-agentSeen<5000?sync:"Cooperativo: abre el coordinador en ambos equipos para crear vehiculos.");
-        else label("Individual: el menu funciona sin programas externos.");
-        if(!ready)label("Carga una partida y reanudala.");
+        label("F7: Oeffnen/Schliessen | Integriertes Spielmenue (Deutsch)");
+        if(ready&&at<unsigned char>(world,0xEE18))label(GetTickCount()-agentSeen<5000?sync:"Koop: Oeffne den Koordinator auf beiden PCs zum Spawnen.");
+        else label("Einzelspieler: Menue funktioniert ohne externe Programme.");
+        if(!ready)label("Lade einen Spielstand und setze das Spiel fort.");
         else{
             auto begin=at<uintptr_t>(world,0x15B0),end=at<uintptr_t>(world,0x15B8);int n=int((end-begin)/0x128);
             if(n>0&&n<128){
                 ensureMaterial();
-                auto name=text(at<char*>((void*)(begin+material*0x128),0));if(button("Material: "+name+" [siguiente]"))material=(material+1)%n;
+                auto name=text(at<char*>((void*)(begin+material*0x128),0));if(button("Material: "+name+" [Naechstes]"))material=(material+1)%n;
             }
-            std::string truck=target<0?"el que conduces":std::to_string(target);
-            if(button("Volquete: "+truck+" [siguiente]")){
+            std::string truck=target<0?"Aktuelles Fahrzeug":std::to_string(target);
+            if(button("Muldenkipper: "+truck+" [Naechster]")){
                 size_t count=(at<uintptr_t>(world,0xE8C8)-at<uintptr_t>(world,0xE8C0))/8;int next=-1;
                 for(int i=target+1;i<int(count);i++){auto m=machine(world,i);if(m&&text(at<char*>(m,8)).find("hauler")!=std::string::npos){next=i;break;}}target=next;
             }
-            slider("Volumen m3",amount,0.1f,20);
-            if(button("Anadir material al volquete"))fill(false);
-            if(button("Llenar volquete hasta capacidad"))fill(true);
-            if(button(binding?"Pulsa A-Z o F1-F12 (Esc cancela)":"Asignar atajo de llenado: "+keyName(fillKey)))binding=true;
-            label("El atajo usa este material y volquete. Una pulsacion = una accion.");
-            if(button(std::string("Vehiculo: ")+models[model]+" [siguiente]"))model=(model+1)%12;
-            if(button("Crear vehiculo junto a mi"))create();
-            slider("Radio del monton",radius,0.25f,5);slider("Altura del monton",height,0.1f,3);
-            if(button("Crear monton del material seleccionado")){float x=0,z=0;if(position(radius+5,x,z))action(5,0,material,radius,x,z,"",height);}
-            if(button("Excavadora: retirar bloqueo activo"))action(4);
-            label("TERRENO · Experimental · Individual");
-            if(button(std::string("Pincel: ")+terrain::names[terrain::mode]+" [siguiente]"))terrain::mode=(terrain::mode+1)%4;
-            slider("Radio del pincel (m)",terrain::radius,0.5f,10);
-            slider("Fuerza por aplicacion",terrain::strength,0.01f,1);
-            slider("Dureza del borde",terrain::hardness,0,1);
-            if(button(terrain::continuous?"Trazo: mantener clic [cambiar]":"Trazo: un clic [cambiar]"))terrain::continuous=!terrain::continuous;
+            slider("Menge (m3)",amount,0.1f,20);
+            if(button("Material in Muldenkipper fuellen"))fill(false);
+            if(button("Muldenkipper komplett fuellen"))fill(true);
+            if(button(binding?"Druecke A-Z oder F1-F12 (Esc = Abbruch)":"Schnelltaste zum Fuellen: "+keyName(fillKey)))binding=true;
+            label("Schnelltaste nutzt gewaehltes Material & Kipper.");
+            if(button(std::string("Fahrzeug: ")+modelLabels[model]+" [Naechstes]"))model=(model+1)%12;
+            if(button("Fahrzeug neben mir spawnen"))create();
+            slider("Haufen-Radius (m)",radius,0.25f,5);slider("Haufen-Hoehe (m)",height,0.1f,3);
+            if(button("Materialhaufen neben mir erstellen")){float x=0,z=0;if(position(radius+5,x,z))action(5,0,material,radius,x,z,"",height);}
+            if(button("Alle Fahrzeuge/Bagger entsperren"))action(4);
+            label("GELAENDE · Experimentell · Einzelspieler");
+            if(button(std::string("Pinselmodus: ")+terrain::names[terrain::mode]+" [Wechseln]"))terrain::mode=(terrain::mode+1)%4;
+            slider("Pinselradius (m)",terrain::radius,0.5f,10);
+            slider("Staerke pro Anwendung",terrain::strength,0.01f,1);
+            slider("Kantenschaerfe",terrain::hardness,0,1);
+            if(button(terrain::continuous?"Strich: Maustaste halten [Wechseln]":"Strich: Einzelklick [Wechseln]"))terrain::continuous=!terrain::continuous;
             if(terrain::mode==2){
-                slider("Altura objetivo (m)",terrain::level,-20,100);
-                if(button("Tomar altura del terreno (siguiente clic)")){terrain::armed=true;terrain::pickLevel=true;}
-                if(button("Usar altura indicada"))terrain::levelPicked=true;
+                slider("Zielhoehe (m)",terrain::level,-20,100);
+                if(button("Hoehe vom Gelaende aufnehmen (Naechster Klick)")){terrain::armed=true;terrain::pickLevel=true;}
+                if(button("Angegebene Hoehe verwenden"))terrain::levelPicked=true;
             }
-            if(button(terrain::armed?"Desactivar pincel [Esc]":"Activar pincel")){terrain::armed=!terrain::armed;terrain::wasDown=true;terrain::status=terrain::armed?"Activado: apunta al terreno fuera del panel.":"Pincel desactivado";}
-            label("Camara libre automatica: WASD | Q/E: bajar/subir");
-            label("Boton derecho: girar | Mayus: rapido | Clic izquierdo: pintar");
-            label("Esc o F7: salir y restaurar la camara anterior.");label(terrain::status);
-            label("Carga/montones/excavadora: sincronizacion cooperativa sin verificar.");
+            if(button(terrain::armed?"Pinsel deaktivieren [Esc]":"Pinsel aktivieren")){terrain::armed=!terrain::armed;terrain::wasDown=true;terrain::status=terrain::armed?"Aktiviert: Zeige auf das Gelaende ausserhalb des Menues.":"Pinsel deaktiviert";}
+            label("Freie Kamera: WASD | Q/E: Runter/Hoch");
+            label("Rechtsklick: Drehen | Shift: Schnell | Linksklick: Malen");
+            label("Esc oder F7: Beenden und Kamera wiederherstellen.");label(terrain::status);
+            label("Hinweis: Fuellen/Haufen/Entsperren im Koop ungetestet.");
         }
         label(message);
     }
@@ -240,13 +234,11 @@ static void __fastcall frame(){
         try{
             draw();
             if(visible){
-                // NewFrame recomputes capture every frame. Queue the override as well as
-                // setting current IO so neither phase of the game's input loop sees a gap.
                 io().WantCaptureMouse=true;io().WantCaptureKeyboard=true;
                 api<void(__fastcall*)(bool)>(0x114D610)(true);
                 api<void(__fastcall*)(bool)>(0x114D5F0)(true);
             }
-        }catch(...){terrain::armed=false;restoreCamera();visible=false;message="Error de interfaz; reinicia el juego.";}
+        }catch(...){terrain::armed=false;restoreCamera();visible=false;message="UI-Fehler; bitte Spiel neu starten.";}
     }
     originalEnd();
 }
