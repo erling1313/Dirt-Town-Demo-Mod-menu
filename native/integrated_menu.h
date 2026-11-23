@@ -58,7 +58,7 @@ static bool getSpawnTarget(float& outX, float& outZ, float& outYawRad){
     alignas(32) double centerHit[4]{};
     if(terrain::cameraWorld==world&&GetTickCount()-terrain::cameraSeen<1500&&terrain::hit(world,input.DisplaySize.x*0.5f,input.DisplaySize.y*0.5f,input.DisplaySize.x,input.DisplaySize.y,centerHit)){
         float dx=float(centerHit[0])-px,dz=float(centerHit[2])-pz;
-        float len=hypotf(dx,dz);
+        float len=sqrtf(dx*dx+dz*dz);
         if(len>0.25f){fwdX=dx/len;fwdZ=dz/len;}
     }
     float rightX=-fwdZ,rightZ=fwdX;
