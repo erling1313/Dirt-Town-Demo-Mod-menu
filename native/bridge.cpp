@@ -58,7 +58,7 @@ static bool materialOK(void* w,int id){
     auto begin=at<uintptr_t>(w,0x15B0),end=at<uintptr_t>(w,0x15B8);
     return end>=begin && (end-begin)%0x128==0 && id>=0 && size_t(id)<(end-begin)/0x128 && (end-begin)/0x128<128;
 }
-// Hilfsfunktion: Entfernt Steuerungssperren von einem bestimmten Fahrzeug oder allen Fahrzeugen
+// Entfernt alle Demo- und Steuerungssperren von einem bestimmten oder allen Fahrzeugen
 static int unlockMachine(void* w, int targetId = -1){
     auto specs=at<void**>(w,0xE8D8);
     if(!specs) return 0;
@@ -68,14 +68,16 @@ static int unlockMachine(void* w, int targetId = -1){
         if(targetId >= 0 && int(i) != targetId) continue;
         void* m=machine(w,(int)i);
         if(!m) continue;
-        if(!readable(specs+i,8)||!readable(specs[i],0x180))continue;
-        auto spec=specs[i];
-        auto len=at<uint64_t>(spec,0x170);
-        auto str=at<char*>(spec,0x168);
-        if(len>0&&len<512&&readable(str,size_t(len)+1)){
-            str[0]=0;
-            at<uint64_t>(spec,0x170)=0;
-            unlocked++;
+        if(readable(specs+i,8)&&readable(specs[i],0x180)){
+            auto spec=specs[i];
+            auto len=at<uint64_t>(spec,0x170);
+            auto str=at<char*>(spec,0x168);
+            if(len>0&&len<512&&readable(str,size_t(len)+1)){
+                str[0]=0;
+                at<uint64_t>(spec,0x170)=0;
+                unlocked++;
+            }
+            if(at<unsigned char>(spec,0x160)==1) at<unsigned char>(spec,0x160)=0;
         }
     }
     return unlocked;
@@ -152,25 +154,22 @@ static void execute(void* w){
             DWORD old;
             if(!VirtualProtect(gate,7,PAGE_EXECUTE_READWRITE,&old))throw "Selektor konnte nicht vorbereitet werden";
             gate[0]=0xE9;int32_t delta=int32_t(0xA779C0-0xA77180-5);memcpy(gate+1,&delta,4);gate[5]=gate[6]=0x90;FlushInstructionCache(GetCurrentProcess(),gate,7);
-            int id=reinterpret_cast<Spawn>(base+0xA77150)(w,&s,shared->x,shared->z,0.f);
+            int id=reinterpret_cast<Spawn>(base+0xA77150)(w,&s,shared->x,shared->z,shared->yaw);
             memcpy(gate,saved,7);DWORD ignored;VirtualProtect(gate,7,old,&ignored);FlushInstructionCache(GetCurrentProcess(),gate,7);
             if(id<0)throw "Das Spiel hat das Spawnen abgelehnt (siehe dirttown.log)";
             size_t after=(at<uintptr_t>(w,0xE8C8)-at<uintptr_t>(w,0xE8C0))/8;
             if(size_t(id)!=before||after!=before+1)throw "Unerwartete Erstellung; bitte nicht wiederholen";
 
-            // FIX 1: Besitzer-Slot sowohl im Koop als auch im Einzelspieler korrekt zuweisen
             start=at<int*>(w,0xEAF0);end=at<int*>(w,0xEAF8);
             if(uintptr_t(end)>=uintptr_t(start)&&uintptr_t(end)-uintptr_t(start)==after*4&&readable(start,after*4)){
                 if(!owners.empty()) memcpy(start,owners.data(),owners.size()*sizeof(int));
                 start[id]=network ? shared->vehicle : 0;
             }
-            // FIX 2: Eventuelle Demo-Steuerungssperren direkt vom neuen Fahrzeug entfernen
             unlockMachine(w, id);
 
             reply("{\"ok\":true,\"vehicle\":"+std::to_string(id)+"}");
         }
         else if(shared->command==4){
-            // Entsperrt alle gesperrten Fahrzeuge (nicht nur Bagger)
             int unlocked = unlockMachine(w, -1);
             reply("{\"ok\":true,\"unlocked\":"+std::to_string(unlocked)+"}");
         }
